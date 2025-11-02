@@ -1,0 +1,295 @@
+import javax.swing.*;
+import java.awt.*;
+import java.awt.event.*;
+import java.io.*;
+import java.util.ArrayList;
+import java.util.Random;
+
+public class main extends JPanel implements ActionListener, Serializable {
+
+    private static final long serialVersionUID = 1L;
+
+    // Game variables
+    private double money = 1000;
+    private int visitors = 0;
+    private transient Timer gameTimer;
+    private transient Timer rideIncomeTimer;
+
+    // Money click button
+    private transient JButton moneyButton;
+
+    // Ride panel
+    private ArrayList<Ride> rides = new ArrayList<>();
+    private transient JPanel ridePanel;
+
+    // Quests
+    private ArrayList<Quest> quests = new ArrayList<>();
+    private transient JPanel questPanel;
+
+    private transient Random rand = new Random();
+
+    // File for saving
+    private final String saveFile = "themepark_save.dat";
+
+    public main() {
+        setLayout(null);
+
+        // Ride panel
+        ridePanel = new JPanel();
+        ridePanel.setLayout(new GridLayout(0,1));
+        ridePanel.setBounds(300, 50, 250, 500);
+        add(ridePanel);
+
+        // Quest panel
+        questPanel = new JPanel();
+        questPanel.setLayout(new GridLayout(0,1));
+        questPanel.setBounds(600, 50, 200, 500);
+        add(questPanel);
+
+        // Money click button
+        moneyButton = new JButton("Collect $10");
+        moneyButton.setBounds(50, 500, 150, 50);
+        moneyButton.addActionListener(e -> money += 10);
+        add(moneyButton);
+
+        // Load previous game if exists
+        loadGame();
+
+        // If no rides loaded, create default rides
+        if(rides.isEmpty()){
+            addRide("Ferris Wheel", 500);
+            addRide("Roller Coaster", 1200);
+            addRide("Haunted House", 800);
+            addRide("Bumper Cars", 700);
+            addRide("Water Slide", 1500);
+            addRide("Swing Ride", 600);
+            addRide("Drop Tower", 1800);
+        }
+
+        if(quests.isEmpty()){
+            addQuest("Earn $500", 500);
+            addQuest("Open 3 rides", 3);
+            addQuest("Earn $5000", 5000);
+        }
+
+        // Add ride buttons to panel
+        for(Ride r : rides) ridePanel.add(r.button);
+
+        // Add quest labels to panel
+        for(Quest q : quests) questPanel.add(q.label);
+
+        // Game timers
+        gameTimer = new Timer(1000, this);
+        gameTimer.start();
+
+        rideIncomeTimer = new Timer(10000, e -> giveRideIncome());
+        rideIncomeTimer.start();
+
+        // Save game when closing
+        JFrame topFrame = (JFrame) SwingUtilities.getWindowAncestor(this);
+        if(topFrame != null){
+            topFrame.addWindowListener(new WindowAdapter() {
+                public void windowClosing(WindowEvent e){
+                    saveGame();
+                }
+            });
+        }
+    }
+
+    private void addRide(String name, double cost) {
+        Ride ride = new Ride(name, cost);
+        rides.add(ride);
+    }
+
+    private void addQuest(String desc, double target) {
+        Quest q = new Quest(desc, target);
+        quests.add(q);
+    }
+
+    private void giveRideIncome() {
+        for(Ride r : rides) if(r.open) money += 100;
+    }
+
+    @Override
+    protected void paintComponent(Graphics g) {
+        super.paintComponent(g);
+
+        // Background
+        g.setColor(new Color(100,200,100));
+        g.fillRect(0,0,getWidth(),getHeight());
+
+        // HUD
+        g.setColor(Color.BLACK);
+        g.setFont(new Font("Arial", Font.BOLD, 20));
+        g.drawString("Money: $" + (int) money, 20, 30);
+        g.drawString("Park Visitors: " + visitors, 20, 60);
+        g.drawString("Made by ScriptCookie", getWidth()-220, 30);
+
+        // Draw opened rides
+        int y = 100;
+        for(Ride r : rides){
+            if(r.open){
+                g.setColor(Color.ORANGE);
+                g.fillRect(50, y, 150, 50);
+                g.setColor(Color.BLACK);
+                g.drawString(r.name, 60, y+30);
+                y += 70;
+            }
+        }
+    }
+
+    @Override
+    public void actionPerformed(ActionEvent e) {
+        // Visitors increase
+        for(Ride r: rides) if(r.open) visitors += 1;
+
+        // Check quests
+        for(Quest q: quests){
+            if(!q.completed && q.checkCondition()) q.complete();
+        }
+
+        repaint();
+    }
+
+    // Ride class
+    class Ride implements Serializable {
+        private static final long serialVersionUID = 1L;
+
+        String name;
+        double cost;
+        boolean open = false;
+        int upgrades = 0;
+        transient JButton button;
+
+        public Ride(String name, double cost){
+            this.name = name;
+            this.cost = cost;
+            button = new JButton(name + " ($" + (int) cost + ")");
+            button.addActionListener(e -> buyOrToggle());
+        }
+
+        private void buyOrToggle() {
+            if(!open && money >= cost){
+                money -= cost;
+                open = true;
+                button.setText(name + " (Open)");
+                JOptionPane.showMessageDialog(null, name + " opened!");
+            } else if(open){
+                String[] options = {"Upgrade ($" + (cost/2) + ")", "Sell ($" + (cost/2) + ")", "Close"};
+                int choice = JOptionPane.showOptionDialog(null,
+                        name + "\nUpgrades: " + upgrades + "\nCost: $" + (int) cost,
+                        "Ride Stats", JOptionPane.DEFAULT_OPTION,
+                        JOptionPane.INFORMATION_MESSAGE, null, options, options[0]);
+                if(choice == 0 && money >= cost/2){
+                    money -= cost/2;
+                    upgrades += 1;
+                    JOptionPane.showMessageDialog(null, name + " upgraded! Upgrades: " + upgrades);
+                } else if(choice == 1){
+                    money += cost/2;
+                    open = false;
+                    button.setText(name + " (Closed)");
+                }
+            } else if(!open && money < cost){
+                JOptionPane.showMessageDialog(null, "Not enough money to open " + name);
+            }
+        }
+
+        // Restore transient JButton after deserialization
+        private void readObject(ObjectInputStream in) throws Exception {
+            in.defaultReadObject();
+            button = new JButton(name + (open ? " (Open)" : " ($" + (int) cost + ")"));
+            button.addActionListener(e -> buyOrToggle());
+        }
+    }
+
+    // Quest class
+    class Quest implements Serializable {
+        private static final long serialVersionUID = 1L;
+
+        String desc;
+        double target;
+        boolean completed = false;
+        transient JLabel label;
+
+        public Quest(String desc, double target){
+            this.desc = desc;
+            this.target = target;
+            label = new JLabel(desc + " (Incomplete)");
+        }
+
+        public boolean checkCondition(){
+            if(desc.contains("Earn $")){
+                double amt = Double.parseDouble(desc.replaceAll("[^0-9]", ""));
+                return money >= amt;
+            } else if(desc.contains("Open")){
+                int num = Integer.parseInt(desc.replaceAll("[^0-9]", ""));
+                int openRides = 0;
+                for(Ride r: rides) if(r.open) openRides++;
+                return openRides >= num;
+            }
+            return false;
+        }
+
+        public void complete(){
+            completed = true;
+            if(label != null) label.setText(desc + " (Completed!)");
+            money += 100;
+            JOptionPane.showMessageDialog(null, "Quest Complete! +$100");
+        }
+
+        private void readObject(ObjectInputStream in) throws Exception {
+            in.defaultReadObject();
+            label = new JLabel(desc + (completed ? " (Completed!)" : " (Incomplete)"));
+        }
+    }
+
+    // Save/load game
+    private void saveGame(){
+        try (ObjectOutputStream out = new ObjectOutputStream(new FileOutputStream(saveFile))){
+            out.writeObject(this);
+        } catch (Exception ex){ ex.printStackTrace(); }
+    }
+
+    private void loadGame(){
+        File f = new File(saveFile);
+        if(f.exists()){
+            try (ObjectInputStream in = new ObjectInputStream(new FileInputStream(saveFile))){
+                main loaded = (main) in.readObject();
+                this.money = loaded.money;
+                this.visitors = loaded.visitors;
+                this.rides = loaded.rides;
+                this.quests = loaded.quests;
+            } catch (Exception ex){ ex.printStackTrace(); }
+        }
+    }
+
+    // Title screen
+    public static void main(String[] args){
+        JFrame frame = new JFrame("Theme Park Tycoon: Java Edition");
+
+        JPanel titleScreen = new JPanel();
+        titleScreen.setLayout(null);
+        JLabel title = new JLabel("Theme Park Tycoon: Java Edition", SwingConstants.CENTER);
+        title.setFont(new Font("Arial", Font.BOLD, 30));
+        title.setBounds(0,50,800,50);
+        titleScreen.add(title);
+
+        JButton playButton = new JButton("Play");
+        playButton.setBounds(350,200,100,50);
+        titleScreen.add(playButton);
+
+        frame.add(titleScreen);
+        frame.setSize(800,600);
+        frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
+        frame.setLocationRelativeTo(null);
+        frame.setVisible(true);
+
+        playButton.addActionListener(e -> {
+            frame.getContentPane().removeAll();
+            main game = new main();
+            frame.add(game);
+            frame.revalidate();
+            frame.repaint();
+        });
+    }
+}
