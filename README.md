@@ -1,0 +1,1 @@
+All the scripts you see in this folder are games I made! You can use the scripts if you want, just please don't claim them as your own. You can copy and paste the games into your IDE and play them. They are simple, but pretty cool projects. If you want me to make a game using JAVA for you, just contact me at waffleguy145@gmail.com
