@@ -1,0 +1,531 @@
+// File: FlappyCookie.java
+// A polished Flappy Bird-like game in pure Java (Swing).
+// Controls: Space / mouse click = flap. P = pause. R = restart. ESC = menu/exit.
+// High score saved to flappy_highscore.txt
+// Made by ScriptCookie
+
+import javax.swing.*;
+import java.awt.*;
+import java.awt.event.*;
+import java.awt.geom.AffineTransform;
+import java.io.*;
+import java.util.*;
+import java.util.List;
+
+public class FlappyCookie extends JPanel implements ActionListener, KeyListener, MouseListener {
+    // Window
+    private final int WIDTH = 480;
+    private final int HEIGHT = 700;
+
+    // Game loop timer (Swing Timer)
+    private final javax.swing.Timer timer;
+
+    // Bird physics
+    private double birdX, birdY;
+    private double birdVy;
+    private final double GRAVITY = 0.55;
+    private final double FLAP_VELOCITY = -9.5;
+    private final double MAX_DOWN_VELOCITY = 12;
+    private final int BIRD_SIZE = 34;
+
+    // Pipes
+    private final List<Pipe> pipes = new ArrayList<>();
+    private final int PIPE_WIDTH = 80;
+    private final int GAP_MIN = 140;
+    private final int GAP_MAX = 200;
+    private final double PIPE_SPEED = 2.8;
+    private int framesSinceLastPipe = 0;
+    private final int PIPE_SPAWN_RATE_MIN = 90; // frames
+    private final int PIPE_SPAWN_RATE_MAX = 140;
+
+    // Ground
+    private final int GROUND_HEIGHT = 110;
+
+    // Game state
+    private enum State { MENU, RUNNING, PAUSED, GAMEOVER }
+    private State state = State.MENU;
+
+    // Score
+    private int score = 0;
+    private int highScore = 0;
+    private final String HS_FILE = "flappy_highscore.txt";
+
+    // Graphics & UI
+    private Font hudFont = new Font("Arial", Font.BOLD, 24);
+    private Font titleFont = new Font("Arial", Font.BOLD, 36);
+    private Random rand = new Random();
+
+    // Animation & sprites (we'll draw procedurally)
+    private double birdRotation = 0; // for tilt effect
+    private int flapFrame = 0;
+
+    // Particles
+    private final List<Particle> particles = new ArrayList<>();
+
+    // Parallax background elements
+    private final List<Cloud> clouds = new ArrayList<>();
+    private double bgOffset = 0;
+
+    // Sounds: use Toolkit beep for simple events
+    private final Toolkit toolkit = Toolkit.getDefaultToolkit();
+
+    // Constructor
+    public FlappyCookie() {
+        setPreferredSize(new Dimension(WIDTH, HEIGHT));
+        setBackground(new Color(135, 206, 235)); // sky blue
+        setFocusable(true);
+        addKeyListener(this);
+        addMouseListener(this);
+
+        timer = new javax.swing.Timer(1000 / 60, this); // 60 FPS
+
+        loadHighScore();
+        initClouds();
+    }
+
+    // Entry
+    public static void main(String[] args) {
+        SwingUtilities.invokeLater(() -> {
+            JFrame frame = new JFrame("FlappyCookie - Made by ScriptCookie");
+            FlappyCookie game = new FlappyCookie();
+            frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
+            frame.setResizable(false);
+            frame.add(game);
+            frame.pack();
+            frame.setLocationRelativeTo(null);
+            frame.setVisible(true);
+            game.showMenu();
+        });
+    }
+
+    private void showMenu() {
+        state = State.MENU;
+        score = 0;
+        resetBird();
+        pipes.clear();
+        repaint();
+    }
+
+    private void startGame() {
+        state = State.RUNNING;
+        score = 0;
+        pipes.clear();
+        framesSinceLastPipe = 0;
+        resetBird();
+        particles.clear();
+        timer.start();
+    }
+
+    private void resetBird() {
+        birdX = WIDTH * 0.25;
+        birdY = HEIGHT / 2.0;
+        birdVy = 0;
+        birdRotation = 0;
+    }
+
+    private void gameOver() {
+        state = State.GAMEOVER;
+        timer.stop();
+        saveHighScore();
+        toolkit.beep();
+        // spawn particles from bird
+        for (int i = 0; i < 30; i++) {
+            particles.add(new Particle(birdX + BIRD_SIZE/2, birdY + BIRD_SIZE/2));
+        }
+        repaint();
+    }
+
+    // High score load/save
+    private void loadHighScore() {
+        File f = new File(HS_FILE);
+        if (!f.exists()) { highScore = 0; return; }
+        try (Scanner sc = new Scanner(f)) {
+            if (sc.hasNextInt()) highScore = sc.nextInt();
+        } catch (Exception e) {
+            highScore = 0;
+        }
+    }
+
+    private void saveHighScore() {
+        if (score > highScore) highScore = score;
+        try (PrintWriter pw = new PrintWriter(new FileWriter(HS_FILE))) {
+            pw.println(highScore);
+        } catch (IOException ignore) {}
+    }
+
+    // Pipes generator
+    private void spawnPipe() {
+        int gap = GAP_MIN + rand.nextInt(GAP_MAX - GAP_MIN + 1);
+        int topHeight = 80 + rand.nextInt(HEIGHT - GROUND_HEIGHT - gap - 160);
+        pipes.add(new Pipe(WIDTH + 40, 0, PIPE_WIDTH, topHeight, false));
+        pipes.add(new Pipe(WIDTH + 40, topHeight + gap, PIPE_WIDTH, HEIGHT - (topHeight + gap) - GROUND_HEIGHT, true));
+    }
+
+    // Cloud generation
+    private void initClouds() {
+        clouds.clear();
+        for (int i = 0; i < 6; i++) {
+            clouds.add(new Cloud(rand.nextInt(WIDTH), rand.nextInt(HEIGHT/2), 40 + rand.nextInt(80), 1 + rand.nextDouble()*0.6));
+        }
+    }
+
+    // Game loop
+    @Override
+    public void actionPerformed(ActionEvent e) {
+        if (state == State.RUNNING) {
+            updatePhysics();
+            updatePipes();
+            updateParticles();
+            bgOffset += 0.4;
+            if (bgOffset > WIDTH) bgOffset = 0;
+            framesSinceLastPipe++;
+            int spawnRate = PIPE_SPAWN_RATE_MIN + rand.nextInt(PIPE_SPAWN_RATE_MAX - PIPE_SPAWN_RATE_MIN + 1);
+            if (framesSinceLastPipe > spawnRate) {
+                spawnPipe();
+                framesSinceLastPipe = 0;
+            }
+        }
+        repaint();
+    }
+
+    private void updatePhysics() {
+        // apply gravity
+        birdVy += GRAVITY;
+        if (birdVy > MAX_DOWN_VELOCITY) birdVy = MAX_DOWN_VELOCITY;
+        birdY += birdVy;
+
+        // rotate bird based on velocity
+        birdRotation = Math.max(-25, Math.min(90, birdVy * 5 + (birdRotation * 0.1)));
+
+        // flap frame animation
+        flapFrame = (flapFrame + 1) % 20;
+
+        // ground collision
+        if (birdY + BIRD_SIZE/2 > HEIGHT - GROUND_HEIGHT) {
+            birdY = HEIGHT - GROUND_HEIGHT - BIRD_SIZE/2;
+            gameOver();
+        }
+
+        // ceiling clamp
+        if (birdY < -10) {
+            birdY = -10;
+            birdVy = 0;
+        }
+    }
+
+    private void updatePipes() {
+        Iterator<Pipe> it = pipes.iterator();
+        while (it.hasNext()) {
+            Pipe p = it.next();
+            p.x -= PIPE_SPEED;
+            // score when center passes bird
+            if (!p.scored && p.isBottom && p.x + PIPE_WIDTH < birdX) {
+                // scoring counts only once per pair (on bottom pipe)
+                score++;
+                p.scored = true;
+                toolkit.beep();
+                // reward particle
+                for (int i = 0; i < 8; i++) particles.add(new Particle(birdX, birdY));
+                if (score > highScore) highScore = score;
+            }
+            // remove off-screen pipes
+            if (p.x + PIPE_WIDTH < -50) it.remove();
+        }
+
+        // collision detection (AABB approximations)
+        Rectangle birdRect = new Rectangle((int)(birdX - BIRD_SIZE/2), (int)(birdY - BIRD_SIZE/2), BIRD_SIZE, BIRD_SIZE);
+        for (Pipe p : pipes) {
+            Rectangle pipeRect = new Rectangle((int)p.x, (int)p.y, p.w, p.h);
+            if (birdRect.intersects(pipeRect)) {
+                // crash
+                gameOver();
+                break;
+            }
+        }
+    }
+
+    private void updateParticles() {
+        Iterator<Particle> it = particles.iterator();
+        while (it.hasNext()) {
+            Particle part = it.next();
+            part.update();
+            if (part.life <= 0) it.remove();
+        }
+    }
+
+    // Input handling
+    private void flap() {
+        if (state == State.MENU) {
+            startGame();
+            return;
+        }
+        if (state == State.GAMEOVER) {
+            startGame();
+            return;
+        }
+        if (state == State.PAUSED) {
+            state = State.RUNNING;
+            timer.start();
+            return;
+        }
+        if (state != State.RUNNING) return;
+        birdVy = FLAP_VELOCITY;
+        birdRotation = -25;
+        toolkit.beep();
+    }
+
+    private void togglePause() {
+        if (state == State.RUNNING) {
+            state = State.PAUSED;
+            timer.stop();
+        } else if (state == State.PAUSED) {
+            state = State.RUNNING;
+            timer.start();
+        }
+    }
+
+    // Rendering
+    @Override
+    protected void paintComponent(Graphics g0) {
+        super.paintComponent(g0);
+        Graphics2D g = (Graphics2D) g0.create();
+        g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+
+        // sky background gradient
+        Paint old = g.getPaint();
+        GradientPaint sky = new GradientPaint(0, 0, new Color(135, 206, 235), 0, HEIGHT, new Color(100, 170, 230));
+        g.setPaint(sky);
+        g.fillRect(0, 0, WIDTH, HEIGHT);
+
+        // parallax clouds
+        for (Cloud c : clouds) {
+            c.x -= c.speed;
+            if (c.x + c.w < 0) c.x = WIDTH + rand.nextInt(120);
+            drawCloud(g, (int)c.x, (int)c.y, (int)c.w);
+        }
+
+        // scrolling ground (tiles)
+        drawGround(g);
+
+        // pipes (behind bird)
+        for (Pipe p : pipes) {
+            drawPipe(g, p);
+        }
+
+        // draw bird (centered)
+        drawBird(g, birdX - BIRD_SIZE/2, birdY - BIRD_SIZE/2, BIRD_SIZE, BIRD_SIZE, birdRotation);
+
+        // foreground pipes (could be same)
+        // draw particles
+        for (Particle p : particles) p.draw(g);
+
+        // HUD: score
+        g.setColor(Color.WHITE);
+        g.setFont(hudFont);
+        drawCenteredString(g, String.valueOf(score), WIDTH / 2, 70);
+
+        // high score small
+        g.setColor(new Color(255, 255, 255, 200));
+        g.setFont(new Font("Arial", Font.PLAIN, 14));
+        g.drawString("High: " + highScore, 10, 20);
+
+        // state overlays
+        if (state == State.MENU) drawMenu(g);
+        else if (state == State.PAUSED) drawPaused(g);
+        else if (state == State.GAMEOVER) drawGameOver(g);
+
+        // credit
+        g.setColor(Color.BLACK);
+        g.setFont(new Font("Arial", Font.BOLD, 12));
+        g.drawString("Made by ScriptCookie", WIDTH - 150, 18);
+
+        g.setPaint(old);
+        g.dispose();
+    }
+
+    private void drawGround(Graphics2D g) {
+        int tileW = 80;
+        int y = HEIGHT - GROUND_HEIGHT;
+        // ground layer
+        g.setColor(new Color(92, 64, 51));
+        g.fillRect(0, y, WIDTH, GROUND_HEIGHT);
+        // tiles
+        g.setColor(new Color(70, 45, 30));
+        for (int x = - (int)bgOffset % tileW; x < WIDTH; x += tileW) {
+            g.fillRect(x, y, tileW - 4, 20);
+        }
+    }
+
+    private void drawCloud(Graphics2D g, int x, int y, int w) {
+        g.setColor(new Color(255, 255, 255, 230));
+        g.fillOval(x, y, w, w / 2);
+        g.fillOval(x + w/3, y - w/6, w, w / 2);
+        g.setColor(new Color(240,240,240,200));
+        g.fillOval(x + w/6, y + w/12, w/2, w/4);
+    }
+
+    private void drawPipe(Graphics2D g, Pipe p) {
+        Color pipeGreen = new Color(72, 198, 102);
+        // pipe body
+        g.setColor(pipeGreen.darker());
+        g.fillRect((int)p.x, (int)p.y, p.w, p.h);
+        // rim
+        g.setColor(pipeGreen.brighter());
+        g.fillRect((int)p.x - 4, (int)p.y, 4, p.h);
+        g.fillRect((int)(p.x + p.w), (int)p.y, 4, p.h);
+        // decorative stripes
+        g.setColor(pipeGreen.darker().darker());
+        for (int i = 0; i < p.h; i += 18) {
+            g.fillRect((int)p.x + 8, (int)p.y + i, p.w - 16, 6);
+        }
+    }
+
+    private void drawBird(Graphics2D g, double x, double y, double w, double h, double rotDeg) {
+        AffineTransform old = g.getTransform();
+        g.translate(x + w/2, y + h/2);
+        g.rotate(Math.toRadians(rotDeg));
+        // body
+        g.setColor(new Color(255, 200, 80)); // cookie-like color
+        g.fillOval((int)(-w/2), (int)(-h/2), (int)w, (int)h);
+        // chocolate chips
+        g.setColor(new Color(80, 45, 20));
+        int chips = 6;
+        for (int i = 0; i < chips; i++) {
+            double angle = i * Math.PI * 2 / chips + flapFrame * 0.06;
+            int cx = (int)(Math.cos(angle) * w*0.22);
+            int cy = (int)(Math.sin(angle) * h*0.22);
+            g.fillOval(cx - 4, cy - 4, 8, 8);
+        }
+        // eye
+        g.setColor(Color.BLACK);
+        g.fillOval((int)(w*0.12 - 4), (int)(-h*0.08 - 4), 8, 8);
+        // mouth
+        g.setColor(new Color(200, 100, 80));
+        g.fillArc((int)(-w*0.02), (int)(h*0.12), (int)(w*0.28), (int)(h*0.16), 0, -180);
+        g.setTransform(old);
+    }
+
+    private void drawMenu(Graphics2D g) {
+        // translucent panel
+        g.setColor(new Color(0,0,0,140));
+        g.fillRect(30, 120, WIDTH - 60, 380);
+        g.setColor(Color.WHITE);
+        g.setFont(titleFont);
+        drawCenteredString(g, "FlappyCookie", WIDTH/2, 190);
+        g.setFont(new Font("Arial", Font.PLAIN, 18));
+        drawCenteredString(g, "Press SPACE or Click to Start", WIDTH/2, 250);
+        drawCenteredString(g, "Press P to Pause during play. Press R to Restart after game over.", WIDTH/2, 290);
+        drawCenteredString(g, "Score counts when you pass between pipes.", WIDTH/2, 330);
+        drawCenteredString(g, "High Score: " + highScore, WIDTH/2, 370);
+    }
+
+    private void drawPaused(Graphics2D g) {
+        g.setColor(new Color(0,0,0,160));
+        g.fillRect(0, 0, WIDTH, HEIGHT);
+        g.setColor(Color.WHITE);
+        g.setFont(titleFont);
+        drawCenteredString(g, "PAUSED", WIDTH/2, HEIGHT/2 - 20);
+        g.setFont(hudFont);
+        drawCenteredString(g, "Press P to resume", WIDTH/2, HEIGHT/2 + 30);
+    }
+
+    private void drawGameOver(Graphics2D g) {
+        g.setColor(new Color(0,0,0,160));
+        g.fillRect(0, 0, WIDTH, HEIGHT);
+        g.setColor(Color.WHITE);
+        g.setFont(titleFont);
+        drawCenteredString(g, "GAME OVER", WIDTH/2, HEIGHT/2 - 40);
+        g.setFont(hudFont);
+        drawCenteredString(g, "Score: " + score, WIDTH/2, HEIGHT/2 + 0);
+        drawCenteredString(g, "High Score: " + highScore, WIDTH/2, HEIGHT/2 + 40);
+        drawCenteredString(g, "Press R to Restart or SPACE to play again", WIDTH/2, HEIGHT/2 + 100);
+    }
+
+    private void drawCenteredString(Graphics2D g, String text, int cx, int cy) {
+        FontMetrics fm = g.getFontMetrics();
+        int w = fm.stringWidth(text);
+        int h = fm.getAscent();
+        g.drawString(text, cx - w/2, cy + h/2);
+    }
+
+    // Input events
+    @Override
+    public void keyTyped(KeyEvent e) { }
+
+    @Override
+    public void keyPressed(KeyEvent e) {
+        int code = e.getKeyCode();
+        if (code == KeyEvent.VK_SPACE) {
+            flap();
+        } else if (code == KeyEvent.VK_P) {
+            togglePause();
+        } else if (code == KeyEvent.VK_R) {
+            startGame();
+        } else if (code == KeyEvent.VK_ESCAPE) {
+            if (state == State.RUNNING || state == State.PAUSED) {
+                state = State.MENU;
+                timer.stop();
+            } else {
+                System.exit(0);
+            }
+        }
+    }
+
+    @Override
+    public void keyReleased(KeyEvent e) { }
+
+    @Override
+    public void mouseClicked(MouseEvent e) {
+        flap();
+    }
+    @Override public void mousePressed(MouseEvent e) { }
+    @Override public void mouseReleased(MouseEvent e) { }
+    @Override public void mouseEntered(MouseEvent e) { requestFocusInWindow(); }
+    @Override public void mouseExited(MouseEvent e) { }
+
+    // Inner classes
+    private static class Pipe {
+        double x, y;
+        int w, h;
+        boolean isBottom;
+        boolean scored = false;
+        Pipe(double x, double y, int w, int h, boolean isBottom) {
+            this.x = x; this.y = y; this.w = w; this.h = h; this.isBottom = isBottom;
+        }
+    }
+
+    private class Particle {
+        double x, y;
+        double vx, vy;
+        double life;
+        Color color;
+        Particle(double x, double y) {
+            this.x = x;
+            this.y = y;
+            vx = (rand.nextDouble() - 0.5) * 8;
+            vy = (rand.nextDouble() - 1.5) * 8;
+            life = 40 + rand.nextInt(40);
+            color = new Color(240, 180, 80, 220);
+        }
+        void update() {
+            life--;
+            x += vx;
+            y += vy;
+            vy += 0.4;
+            vx *= 0.99;
+            vy *= 0.99;
+        }
+        void draw(Graphics2D g) {
+            int s = (int)(2 + (life/40)*4);
+            g.setColor(color);
+            g.fillOval((int)x - s/2, (int)y - s/2, s, s);
+        }
+    }
+
+    private static class Cloud {
+        double x,y;
+        double w;
+        double speed;
+        Cloud(double x,double y,double w,double speed){this.x=x;this.y=y;this.w=w;this.speed=speed;}
+    }
+}
