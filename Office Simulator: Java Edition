@@ -1,0 +1,655 @@
+// File: ScriptCookieJobSimulator.java
+import javax.swing.*;
+import javax.swing.border.EmptyBorder;
+import java.awt.*;
+import java.awt.event.*;
+import java.io.*;
+import java.time.LocalDateTime;
+import java.util.*;
+import java.util.List;
+
+/**
+ * ScriptCookie Inc: Job Simulator (Math Version)
+ * Single-file Swing Java application. Save file: scriptcookie_save.dat
+ */
+public class main {
+
+    public static void main(String[] args) {
+        SwingUtilities.invokeLater(() -> new main().showMainMenu());
+    }
+
+    // -------------------------
+    // Application state & UI
+    // -------------------------
+    private final String SAVE_FILE = "scriptcookie_save.dat";
+    private JFrame frame;
+    private CardLayout cards;
+    private JPanel rootPanel;
+    private GameState state;
+    private javax.swing.Timer generationTimer; // Swing Timer (start/stop available)
+
+    // UI refs
+    private JLabel pointsLabel, moneyLabel, tasksLabel, emailsLabel;
+    private DefaultListModel<Task> taskListModel;
+    private DefaultListModel<Email> emailListModel;
+    private JTextArea taskPromptArea;
+    private JTextArea taskTypingArea;
+    private JTabbedPane tabs;
+    private JTextArea reportArea;
+
+    // -------------------------
+    // Entry / Main Menu
+    // -------------------------
+    private void showMainMenu() {
+        state = loadState();
+        if (state == null) state = new GameState();
+
+        frame = new JFrame("ScriptCookie Inc: Job Simulator");
+        frame.setDefaultCloseOperation(JFrame.DO_NOTHING_ON_CLOSE);
+        frame.setSize(1000, 700);
+        frame.setResizable(false);
+        frame.setLocationRelativeTo(null);
+
+        frame.addWindowListener(new WindowAdapter() {
+            public void windowClosing(WindowEvent e) {
+                saveState();
+                System.exit(0);
+            }
+        });
+
+        cards = new CardLayout();
+        rootPanel = new JPanel(cards);
+
+        rootPanel.add(buildTitleScreen(), "TITLE");
+        rootPanel.add(buildGamePanel(), "GAME");
+
+        frame.setContentPane(rootPanel);
+        frame.setVisible(true);
+    }
+
+    private JPanel buildTitleScreen() {
+        JPanel p = new JPanel(null);
+        p.setBackground(new Color(30, 30, 40));
+
+        JLabel title = new JLabel("ScriptCookie Inc: Job Simulator", SwingConstants.CENTER);
+        title.setFont(new Font("Arial", Font.BOLD, 36));
+        title.setForeground(Color.WHITE);
+        title.setBounds(0, 80, 1000, 80);
+        p.add(title);
+
+        JButton play = new JButton("Play");
+        play.setBounds(425, 220, 150, 60);
+        play.setFont(new Font("Arial", Font.BOLD, 20));
+        p.add(play);
+
+        JButton reset = new JButton("Reset Progress");
+        reset.setBounds(425, 310, 150, 40);
+        p.add(reset);
+
+        JLabel credit = new JLabel("Made by ScriptCookie");
+        credit.setForeground(Color.LIGHT_GRAY);
+        credit.setBounds(800, 20, 180, 20);
+        p.add(credit);
+
+        JLabel subtitle = new JLabel("<html><center>Welcome to ScriptCookie Inc.<br>Get ready to solve math problems and handle complaints.</center></html>",
+                SwingConstants.CENTER);
+        subtitle.setForeground(Color.GRAY);
+        subtitle.setBounds(0, 140, 1000, 60);
+        p.add(subtitle);
+
+        play.addActionListener(new ActionListener() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                refreshModelsFromState();
+                cards.show(rootPanel, "GAME");
+                startGenerationTimer();
+            }
+        });
+
+        reset.addActionListener(new ActionListener() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                int r = JOptionPane.showConfirmDialog(frame, "Are you sure you want to erase all saved progress?", "Reset Progress",
+                        JOptionPane.YES_NO_OPTION, JOptionPane.WARNING_MESSAGE);
+                if (r == JOptionPane.YES_OPTION) {
+                    deleteSave();
+                    state = new GameState();
+                    refreshModelsFromState();
+                    JOptionPane.showMessageDialog(frame, "Progress reset. Start fresh!", "Reset", JOptionPane.INFORMATION_MESSAGE);
+                }
+            }
+        });
+
+        return p;
+    }
+
+    // -------------------------
+    // Build Main Game Panel
+    // -------------------------
+    private JPanel buildGamePanel() {
+        JPanel main = new JPanel(new BorderLayout());
+        main.setBackground(new Color(200, 210, 220));
+
+        // Top bar (stats)
+        JPanel top = new JPanel(null);
+        top.setPreferredSize(new Dimension(1000, 70));
+        top.setBackground(new Color(40, 40, 55));
+
+        pointsLabel = new JLabel("Work Points: " + state.workPoints);
+        pointsLabel.setForeground(Color.WHITE);
+        pointsLabel.setFont(new Font("Arial", Font.BOLD, 16));
+        pointsLabel.setBounds(10, 10, 240, 20);
+        top.add(pointsLabel);
+
+        moneyLabel = new JLabel("Salary: $" + state.money);
+        moneyLabel.setForeground(Color.WHITE);
+        moneyLabel.setFont(new Font("Arial", Font.BOLD, 16));
+        moneyLabel.setBounds(10, 35, 240, 20);
+        top.add(moneyLabel);
+
+        tasksLabel = new JLabel("Tasks Completed: " + state.tasksCompleted);
+        tasksLabel.setForeground(Color.WHITE);
+        tasksLabel.setBounds(260, 10, 220, 20);
+        top.add(tasksLabel);
+
+        emailsLabel = new JLabel("Emails Handled: " + state.emailsHandled);
+        emailsLabel.setForeground(Color.WHITE);
+        emailsLabel.setBounds(260, 35, 220, 20);
+        top.add(emailsLabel);
+
+        JLabel credit = new JLabel("Made by ScriptCookie");
+        credit.setForeground(Color.LIGHT_GRAY);
+        credit.setBounds(820, 10, 180, 20);
+        top.add(credit);
+
+        JButton saveBtn = new JButton("Save Now");
+        saveBtn.setBounds(820, 35, 80, 24);
+        top.add(saveBtn);
+        saveBtn.addActionListener(new ActionListener() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                saveState();
+                JOptionPane.showMessageDialog(frame, "Saved to disk.", "Save", JOptionPane.INFORMATION_MESSAGE);
+            }
+        });
+
+        JButton backToMenu = new JButton("Menu");
+        backToMenu.setBounds(730, 35, 80, 24);
+        top.add(backToMenu);
+        backToMenu.addActionListener(new ActionListener() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                stopGenerationTimer();
+                cards.show(rootPanel, "TITLE");
+            }
+        });
+
+        main.add(top, BorderLayout.NORTH);
+
+        // LEFT: tabs (Emails, Tasks, Reports)
+        tabs = new JTabbedPane();
+        tabs.setPreferredSize(new Dimension(650, 550));
+
+        // EMAILS TAB
+        JPanel emailTab = new JPanel(new BorderLayout());
+        emailListModel = new DefaultListModel<>();
+        for (Email em : state.emails) emailListModel.addElement(em);
+        JList<Email> emailList = new JList<>(emailListModel);
+        emailList.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
+        emailList.setCellRenderer(new EmailCellRenderer());
+        JScrollPane emailScroll = new JScrollPane(emailList);
+        emailTab.add(emailScroll, BorderLayout.CENTER);
+
+        // email view on right
+        JTextArea emailView = new JTextArea();
+        emailView.setEditable(false);
+        emailView.setFont(new Font("Monospaced", Font.PLAIN, 13));
+        emailView.setLineWrap(true);
+        emailView.setWrapStyleWord(true);
+        emailView.setBorder(new EmptyBorder(8, 8, 8, 8));
+        emailTab.add(new JScrollPane(emailView), BorderLayout.EAST);
+        ((JComponent) emailTab.getComponent(1)).setPreferredSize(new Dimension(300, 0));
+
+        JPanel emailActions = new JPanel(new FlowLayout(FlowLayout.LEFT));
+        JButton openEmailBtn = new JButton("Open");
+        JButton respondEmailBtn = new JButton("Respond (Auto)");
+        emailActions.add(openEmailBtn);
+        emailActions.add(respondEmailBtn);
+        emailTab.add(emailActions, BorderLayout.SOUTH);
+
+        openEmailBtn.addActionListener(new ActionListener() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                Email selected = emailList.getSelectedValue();
+                if (selected != null) {
+                    emailView.setText("From: " + selected.from + "\nReceived: " + selected.received + "\n\n" + selected.body);
+                    selected.read = true;
+                    emailList.repaint();
+                    saveState();
+                    updateStats();
+                }
+            }
+        });
+
+        respondEmailBtn.addActionListener(new ActionListener() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                Email selected = emailList.getSelectedValue();
+                if (selected != null) {
+                    selected.handled = true;
+                    state.emailsHandled++;
+                    state.workPoints += 25;
+                    emailListModel.removeElement(selected);
+                    saveState();
+                    updateStats();
+                    JOptionPane.showMessageDialog(frame, "Auto-responded: \"Noted and resolved.\"", "Responded", JOptionPane.INFORMATION_MESSAGE);
+                }
+            }
+        });
+
+        // TASKS TAB
+        JPanel taskTab = new JPanel(new BorderLayout(8, 8));
+        taskTab.setBorder(new EmptyBorder(8, 8, 8, 8));
+        taskListModel = new DefaultListModel<>();
+        for (Task t : state.tasks) taskListModel.addElement(t);
+        JList<Task> tasksList = new JList<>(taskListModel);
+        tasksList.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
+        tasksList.setCellRenderer(new TaskCellRenderer());
+        JScrollPane taskScroll = new JScrollPane(tasksList);
+        taskScroll.setPreferredSize(new Dimension(300, 0));
+        taskTab.add(taskScroll, BorderLayout.WEST);
+
+        // Right side: prompt + typing area
+        JPanel right = new JPanel(new BorderLayout(6, 6));
+        taskPromptArea = new JTextArea();
+        taskPromptArea.setEditable(false);
+        taskPromptArea.setFont(new Font("Monospaced", Font.PLAIN, 14));
+        taskPromptArea.setLineWrap(true);
+        taskPromptArea.setWrapStyleWord(true);
+        taskPromptArea.setBorder(BorderFactory.createTitledBorder("Task Prompt"));
+        right.add(new JScrollPane(taskPromptArea), BorderLayout.NORTH);
+
+        taskTypingArea = new JTextArea();
+        taskTypingArea.setFont(new Font("Monospaced", Font.PLAIN, 14));
+        taskTypingArea.setLineWrap(true);
+        taskTypingArea.setWrapStyleWord(true);
+        taskTypingArea.setBorder(BorderFactory.createTitledBorder("Type here (press Submit when done)"));
+        right.add(new JScrollPane(taskTypingArea), BorderLayout.CENTER);
+
+        JPanel taskButtons = new JPanel(new FlowLayout(FlowLayout.RIGHT));
+        JButton submitTaskButton = new JButton("Submit");
+        JButton abandonBtn = new JButton("Abandon");
+        taskButtons.add(abandonBtn);
+        taskButtons.add(submitTaskButton);
+        right.add(taskButtons, BorderLayout.SOUTH);
+
+        taskTab.add(right, BorderLayout.CENTER);
+
+        tasksList.addListSelectionListener(e -> {
+            Task t = tasksList.getSelectedValue();
+            if (t != null) {
+                taskPromptArea.setText(t.prompt);
+                taskTypingArea.setText(t.prefill);
+            }
+        });
+
+        submitTaskButton.addActionListener(new ActionListener() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                Task selected = tasksList.getSelectedValue();
+                if (selected != null) {
+                    String typed = taskTypingArea.getText().trim();
+                    if (selected.validate(typed)) {
+                        state.workPoints += selected.rewardPoints;
+                        state.tasksCompleted++;
+                        taskListModel.removeElement(selected);
+                        tasksList.clearSelection();
+                        taskPromptArea.setText("");
+                        taskTypingArea.setText("");
+                        saveState();
+                        updateStats();
+                        JOptionPane.showMessageDialog(frame, "Task completed! +" + selected.rewardPoints + " work points.", "Done", JOptionPane.INFORMATION_MESSAGE);
+                    } else {
+                        JOptionPane.showMessageDialog(frame, "Incorrect. Try again or abandon.", "Try again", JOptionPane.WARNING_MESSAGE);
+                    }
+                }
+            }
+        });
+
+        abandonBtn.addActionListener(new ActionListener() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                Task selected = tasksList.getSelectedValue();
+                if (selected != null) {
+                    int r = JOptionPane.showConfirmDialog(frame, "Abandon this task? You will not get rewards.", "Abandon Task", JOptionPane.YES_NO_OPTION);
+                    if (r == JOptionPane.YES_OPTION) {
+                        taskListModel.removeElement(selected);
+                        taskPromptArea.setText("");
+                        taskTypingArea.setText("");
+                        saveState();
+                    }
+                }
+            }
+        });
+
+        // REPORTS TAB
+        JPanel reportTab = new JPanel(new BorderLayout());
+        reportArea = new JTextArea();
+        reportArea.setEditable(false);
+        reportArea.setFont(new Font("Monospaced", Font.PLAIN, 13));
+        JScrollPane reportScroll = new JScrollPane(reportArea);
+        reportTab.add(reportScroll, BorderLayout.CENTER);
+
+        JButton refreshReport = new JButton("Refresh Report");
+        reportTab.add(refreshReport, BorderLayout.SOUTH);
+        refreshReport.addActionListener(new ActionListener() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                reportArea.setText(state.generateReport());
+            }
+        });
+
+        tabs.addTab("Emails", emailTab);
+        tabs.addTab("Tasks", taskTab);
+        tabs.addTab("Reports", reportTab);
+        main.add(tabs, BorderLayout.CENTER);
+
+        // RIGHT PANEL
+        JPanel rightPanel = new JPanel(null);
+        rightPanel.setPreferredSize(new Dimension(330, 550));
+        rightPanel.setBackground(new Color(230, 235, 240));
+
+        JLabel statusLabel = new JLabel("<html><b>Status:</b><br>Idle</html>");
+        statusLabel.setBounds(10, 10, 310, 60);
+        rightPanel.add(statusLabel);
+
+        JButton newTaskBtn = new JButton("Force New Task");
+        newTaskBtn.setBounds(10, 80, 150, 30);
+        rightPanel.add(newTaskBtn);
+        newTaskBtn.addActionListener(new ActionListener() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                addRandomTask();
+                saveState();
+            }
+        });
+
+        JButton newEmailBtn = new JButton("Force New Email");
+        newEmailBtn.setBounds(170, 80, 150, 30);
+        rightPanel.add(newEmailBtn);
+        newEmailBtn.addActionListener(new ActionListener() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                addRandomEmail();
+                saveState();
+            }
+        });
+
+        JButton resetProgressBtn = new JButton("Reset Progress");
+        resetProgressBtn.setBounds(10, 120, 310, 30);
+        rightPanel.add(resetProgressBtn);
+        resetProgressBtn.addActionListener(new ActionListener() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                int r = JOptionPane.showConfirmDialog(frame, "Erase all saved progress and restart?", "Reset", JOptionPane.YES_NO_OPTION);
+                if (r == JOptionPane.YES_OPTION) {
+                    deleteSave();
+                    state = new GameState();
+                    taskListModel.clear();
+                    emailListModel.clear();
+                    for (Task t : state.tasks) taskListModel.addElement(t);
+                    for (Email em : state.emails) emailListModel.addElement(em);
+                    updateStats();
+                }
+            }
+        });
+
+        JLabel instructions = new JLabel("<html><b>Tips:</b><br>- Click a task, type your answer, hit Submit.<br>- Emails can be auto-responded.</html>");
+        instructions.setBounds(10, 170, 310, 80);
+        rightPanel.add(instructions);
+
+        JList<String> feedList = new JList<>(new DefaultListModel<>());
+        JScrollPane feedScroll = new JScrollPane(feedList);
+        feedScroll.setBounds(10, 260, 310, 260);
+        rightPanel.add(feedScroll);
+
+        main.add(rightPanel, BorderLayout.EAST);
+
+        // Initialize starting content
+        if (state.tasks.isEmpty()) for (int i = 0; i < 3; i++) addRandomTask();
+        if (state.emails.isEmpty()) for (int i = 0; i < 2; i++) addRandomEmail();
+
+        refreshModelsFromState();
+        updateStats();
+        return main;
+    }
+
+    // -------------------------
+    // Periodic content generation
+    // -------------------------
+    private void startGenerationTimer() {
+        if (generationTimer != null) generationTimer.stop();
+        generationTimer = new javax.swing.Timer(10000, new ActionListener() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                if (Math.random() < 0.6) addRandomTask();
+                else addRandomEmail();
+                saveState();
+            }
+        });
+        generationTimer.start();
+    }
+
+    private void stopGenerationTimer() {
+        if (generationTimer != null) generationTimer.stop();
+    }
+
+    // -------------------------
+    // Random content generation
+    // -------------------------
+    private static final String[] SAMPLE_COMPLAINTS = new String[]{
+            "My monitor is upside down!",
+            "Coffee machine made my stapler explode!",
+            "The elevator plays weird music at 3AM.",
+            "The printer prints out memes instead of documents.",
+            "My keyboard types in emojis only.",
+            "Someone put confetti in my desk drawer.",
+            "I keep receiving emails in ancient Latin.",
+            "The office plant is judging me.",
+            "My chair slowly moves towards the window.",
+            "The breakroom fridge is whispering."
+    };
+
+    private void addRandomEmail() {
+        String subject = sample(new String[]{
+                "Complaint: " + sample(SAMPLE_COMPLAINTS),
+                "Request: Update my software",
+                "Question: Where is my timesheet?",
+                "Report: Strange noise in room 3B"
+        });
+        String body = "Hello,\n\n" + sample(SAMPLE_COMPLAINTS) + "\n\nPlease advise.\n\nRegards,\nCustomer";
+        Email email = new Email("user" + (100 + new Random().nextInt(900)) + "@scriptcookie.inc", subject, body, LocalDateTime.now());
+        state.emails.add(email);
+        if (emailListModel != null) emailListModel.addElement(email);
+    }
+
+    private void addRandomTask() {
+        Random r = new Random();
+        int a = r.nextInt(50) + 1;
+        int b = r.nextInt(50) + 1;
+        boolean add = r.nextBoolean();
+
+        String prompt;
+        String expected;
+
+        if (add) {
+            prompt = "Solve: " + a + " + " + b + " = ?";
+            expected = String.valueOf(a + b);
+        } else {
+            prompt = "Solve: " + a + " - " + b + " = ?";
+            expected = String.valueOf(a - b);
+        }
+
+        Task t = new Task(prompt, expected, 50);
+        state.tasks.add(t);
+        if (taskListModel != null) taskListModel.addElement(t);
+    }
+
+    private static String sample(String[] arr) {
+        return arr[new Random().nextInt(arr.length)];
+    }
+
+    // -------------------------
+    // Save / Load / Reset
+    // -------------------------
+    private void saveState() {
+        try (ObjectOutputStream out = new ObjectOutputStream(new FileOutputStream(SAVE_FILE))) {
+            out.writeObject(state);
+        } catch (Exception ex) {
+            ex.printStackTrace();
+            JOptionPane.showMessageDialog(frame, "Error saving game: " + ex.getMessage(), "Save Error", JOptionPane.ERROR_MESSAGE);
+        }
+        updateStats();
+    }
+
+    private GameState loadState() {
+        File f = new File(SAVE_FILE);
+        if (!f.exists()) return null;
+        try (ObjectInputStream in = new ObjectInputStream(new FileInputStream(f))) {
+            Object obj = in.readObject();
+            if (obj instanceof GameState) return (GameState) obj;
+        } catch (Exception ex) {
+            ex.printStackTrace();
+        }
+        return null;
+    }
+
+    private void deleteSave() {
+        File f = new File(SAVE_FILE);
+        if (f.exists()) f.delete();
+    }
+
+    private void refreshModelsFromState() {
+        if (taskListModel == null) taskListModel = new DefaultListModel<>();
+        else taskListModel.clear();
+        if (emailListModel == null) emailListModel = new DefaultListModel<>();
+        else emailListModel.clear();
+        for (Task t : state.tasks) taskListModel.addElement(t);
+        for (Email em : state.emails) emailListModel.addElement(em);
+    }
+
+    private void updateStats() {
+        if (pointsLabel != null) pointsLabel.setText("Work Points: " + state.workPoints);
+        if (moneyLabel != null) moneyLabel.setText("Salary: $" + state.money);
+        if (tasksLabel != null) tasksLabel.setText("Tasks Completed: " + state.tasksCompleted);
+        if (emailsLabel != null) emailsLabel.setText("Emails Handled: " + state.emailsHandled);
+    }
+
+    // -------------------------
+    // Data classes
+    // -------------------------
+    static class GameState implements Serializable {
+        private static final long serialVersionUID = 1L;
+        public int workPoints = 0;
+        public int tasksCompleted = 0;
+        public int emailsHandled = 0;
+        public int money = 100;
+        public List<Task> tasks = new ArrayList<>();
+        public List<Email> emails = new ArrayList<>();
+
+        public String generateReport() {
+            StringBuilder sb = new StringBuilder();
+            sb.append("ScriptCookie Inc - Employee Report\n");
+            sb.append("---------------------------------\n");
+            sb.append("Work Points: ").append(workPoints).append("\n");
+            sb.append("Tasks Completed: ").append(tasksCompleted).append("\n");
+            sb.append("Emails Handled: ").append(emailsHandled).append("\n");
+            sb.append("Money: $").append(money).append("\n");
+            sb.append("\nActive Tasks:\n");
+            for (Task t : tasks) sb.append("- ").append(t.summary()).append("\n");
+            sb.append("\nPending Emails:\n");
+            for (Email e : emails) sb.append("- ").append(e.subject).append("\n");
+            return sb.toString();
+        }
+    }
+
+    static class Task implements Serializable {
+        private static final long serialVersionUID = 1L;
+        public String prompt;
+        public String expected;
+        public int rewardPoints;
+        public String prefill;
+
+        public Task(String prompt, String expected, int rewardPoints) {
+            this.prompt = prompt;
+            this.expected = expected;
+            this.rewardPoints = rewardPoints;
+            prefill = "";
+        }
+
+        public boolean validate(String typed) {
+            return typed.trim().equals(expected);
+        }
+
+        @Override
+        public String toString() {
+            return prompt;
+        }
+
+        public String summary() {
+            return prompt.length() > 40 ? prompt.substring(0, 40) + "..." : prompt;
+        }
+    }
+
+    static class Email implements Serializable {
+        private static final long serialVersionUID = 1L;
+        public String from;
+        public String subject;
+        public String body;
+        public LocalDateTime received;
+        public boolean read = false;
+        public boolean handled = false;
+
+        public Email(String from, String subject, String body, LocalDateTime received) {
+            this.from = from;
+            this.subject = subject;
+            this.body = body;
+            this.received = received;
+        }
+
+        @Override
+        public String toString() {
+            return (handled ? "[Done] " : (read ? "[Read] " : "[New] ")) + subject;
+        }
+    }
+
+    static class EmailCellRenderer extends JLabel implements ListCellRenderer<Email> {
+        public EmailCellRenderer() {
+            setOpaque(true);
+            setBorder(new EmptyBorder(6, 6, 6, 6));
+        }
+        @Override
+        public Component getListCellRendererComponent(JList<? extends Email> list, Email value, int index, boolean isSelected, boolean cellHasFocus) {
+            setText(value.toString());
+            setFont(new Font("Arial", Font.PLAIN, 14));
+            setBackground(isSelected ? new Color(200, 220, 255) : Color.WHITE);
+            setForeground(value.handled ? Color.GRAY : Color.BLACK);
+            return this;
+        }
+    }
+
+    static class TaskCellRenderer extends JLabel implements ListCellRenderer<Task> {
+        public TaskCellRenderer() {
+            setOpaque(true);
+            setBorder(new EmptyBorder(6, 6, 6, 6));
+        }
+        @Override
+        public Component getListCellRendererComponent(JList<? extends Task> list, Task value, int index, boolean isSelected, boolean cellHasFocus) {
+            setText(value.summary());
+            setFont(new Font("Monospaced", Font.PLAIN, 13));
+            setBackground(isSelected ? new Color(200, 220, 255) : Color.WHITE);
+            setForeground(Color.BLACK);
+            return this;
+        }
+    }
+}
