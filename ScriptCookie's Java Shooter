@@ -1,0 +1,294 @@
+// File: ScriptCookieShooter.java
+import javax.swing.*;
+import java.awt.*;
+import java.awt.event.*;
+import java.util.*;
+
+public class ScriptCookieShooter extends JPanel implements ActionListener, KeyListener {
+
+    private javax.swing.Timer timer; // explicitly use Swing Timer
+    private Player player;
+    private java.util.List<Enemy> enemies;
+    private java.util.List<Bullet> playerBullets;
+    private java.util.List<Bullet> enemyBullets;
+    private java.util.List<PowerUp> powerUps;
+
+    private int level = 1;
+    private int milkFired = 1;
+    private int cookiesEaten = 0;
+    private int lives = 3;
+    private boolean gameOver = false;
+    private boolean shooting = false;
+
+    private boolean leftPressed = false;
+    private boolean rightPressed = false;
+    private boolean upPressed = false;
+    private boolean downPressed = false;
+
+    private Random rand = new Random();
+
+    private final int WIDTH = 800;
+    private final int HEIGHT = 600;
+
+    public ScriptCookieShooter() {
+        setPreferredSize(new Dimension(WIDTH, HEIGHT));
+        setBackground(Color.BLACK);
+        setFocusable(true);
+        addKeyListener(this);
+
+        initGame();
+    }
+
+    private void initGame() {
+        player = new Player(WIDTH / 2 - 25, HEIGHT - 80);
+        enemies = new ArrayList<>();
+        playerBullets = new ArrayList<>();
+        enemyBullets = new ArrayList<>();
+        powerUps = new ArrayList<>();
+        spawnEnemies();
+
+        timer = new javax.swing.Timer(15, this); // use Swing Timer
+        timer.start();
+    }
+
+    private void spawnEnemies() {
+        enemies.clear();
+        for (int i = 0; i < 5 + level; i++) {
+            int x = 50 + rand.nextInt(WIDTH - 100);
+            int y = 50 + rand.nextInt(150);
+            enemies.add(new Enemy(x, y));
+        }
+    }
+
+    @Override
+    public void actionPerformed(ActionEvent e) {
+        if (!gameOver) {
+            updatePlayer();
+            updateBullets();
+            updateEnemies();
+            updatePowerUps();
+            checkCollisions();
+            repaint();
+        }
+    }
+
+    private void updatePlayer() {
+        int speed = 6;
+        if (leftPressed && player.x > 0) player.x -= speed;
+        if (rightPressed && player.x + player.width < WIDTH) player.x += speed;
+        if (upPressed && player.y > 0) player.y -= speed;
+        if (downPressed && player.y + player.height < HEIGHT) player.y += speed;
+    }
+
+    private void updateBullets() {
+        java.util.List<Bullet> removePlayer = new ArrayList<>();
+        for (Bullet b : playerBullets) {
+            b.move();
+            if (b.y < 0) removePlayer.add(b);
+        }
+        playerBullets.removeAll(removePlayer);
+
+        java.util.List<Bullet> removeEnemy = new ArrayList<>();
+        for (Bullet b : enemyBullets) {
+            b.move();
+            if (b.y > HEIGHT) removeEnemy.add(b);
+        }
+        enemyBullets.removeAll(removeEnemy);
+    }
+
+    private void updateEnemies() {
+        for (Enemy en : enemies) {
+            if (rand.nextInt(150) == 0) {
+                enemyBullets.add(new Bullet(en.x + en.width / 2, en.y + en.height, false));
+            }
+        }
+        if (enemies.isEmpty()) {
+            level++;
+            spawnEnemies();
+        }
+    }
+
+    private void updatePowerUps() {
+        for (PowerUp pu : powerUps) pu.y += 2;
+        powerUps.removeIf(p -> p.y > HEIGHT);
+    }
+
+    private void checkCollisions() {
+        java.util.List<Enemy> removeEnemies = new ArrayList<>();
+        java.util.List<Bullet> removePlayerBullets = new ArrayList<>();
+
+        for (Bullet b : playerBullets) {
+            for (Enemy en : enemies) {
+                if (b.getBounds().intersects(en.getBounds())) {
+                    removeEnemies.add(en);
+                    removePlayerBullets.add(b);
+                    cookiesEaten++;
+                    spawnPowerUp(en.x, en.y);
+                }
+            }
+        }
+        enemies.removeAll(removeEnemies);
+        playerBullets.removeAll(removePlayerBullets);
+
+        java.util.List<Bullet> removeEnemyBullets = new ArrayList<>();
+        for (Bullet b : enemyBullets) {
+            if (b.getBounds().intersects(player.getBounds())) {
+                removeEnemyBullets.add(b);
+                lives--;
+                milkFired = 1;
+                if (lives <= 0) gameOver = true;
+            }
+        }
+        enemyBullets.removeAll(removeEnemyBullets);
+
+        java.util.List<PowerUp> removePowerUps = new ArrayList<>();
+        for (PowerUp pu : powerUps) {
+            if (pu.getBounds().intersects(player.getBounds())) {
+                if (pu.type.equals("HEALTH")) lives = Math.min(3, lives + 1);
+                if (pu.type.equals("MILK")) milkFired++;
+                removePowerUps.add(pu);
+            }
+        }
+        powerUps.removeAll(removePowerUps);
+    }
+
+    private void spawnPowerUp(int x, int y) {
+        if (rand.nextInt(2) == 0) powerUps.add(new PowerUp(x, y, "HEALTH"));
+        else powerUps.add(new PowerUp(x, y, "MILK"));
+    }
+
+    @Override
+    public void paintComponent(Graphics g) {
+        super.paintComponent(g);
+        drawBackground(g);
+        drawPlayer(g);
+        drawEnemies(g);
+        drawBullets(g);
+        drawPowerUps(g);
+        drawStats(g);
+        if (gameOver) drawGameOver(g);
+    }
+
+    private void drawBackground(Graphics g) {
+        int tileSize = 40;
+        for (int i = 0; i < WIDTH / tileSize + 1; i++) {
+            for (int j = 0; j < HEIGHT / tileSize + 1; j++) {
+                if ((i + j) % 2 == 0) g.setColor(new Color(139, 0, 0)); // dark red
+                else g.setColor(new Color(250, 245, 240)); // offwhite
+                g.fillRect(i * tileSize, j * tileSize, tileSize, tileSize);
+            }
+        }
+    }
+
+    private void drawPlayer(Graphics g) {
+        g.setColor(new Color(210, 180, 140));
+        g.fillOval(player.x, player.y, player.width, player.height);
+        g.setColor(new Color(139, 69, 19));
+        for (int i = 0; i < 5; i++) {
+            int cx = player.x + 5 + rand.nextInt(player.width - 10);
+            int cy = player.y + 5 + rand.nextInt(player.height - 10);
+            g.fillOval(cx, cy, 6, 6);
+        }
+    }
+
+    private void drawEnemies(Graphics g) {
+        g.setColor(new Color(205, 133, 63));
+        for (Enemy en : enemies) {
+            g.fillOval(en.x, en.y, en.width, en.height);
+            g.setColor(new Color(139, 69, 19));
+            for (int i = 0; i < 4; i++) {
+                int cx = en.x + 3 + rand.nextInt(en.width - 6);
+                int cy = en.y + 3 + rand.nextInt(en.height - 6);
+                g.fillOval(cx, cy, 5, 5);
+            }
+            g.setColor(new Color(205, 133, 63));
+        }
+    }
+
+    private void drawBullets(Graphics g) {
+        g.setColor(Color.WHITE);
+        for (Bullet b : playerBullets) g.fillRect(b.x, b.y, 6, 12);
+        g.setColor(Color.BLUE);
+        for (Bullet b : enemyBullets) g.fillRect(b.x, b.y, 6, 12);
+    }
+
+    private void drawPowerUps(Graphics g) {
+        for (PowerUp pu : powerUps) {
+            g.setColor(pu.type.equals("HEALTH") ? Color.RED : Color.YELLOW);
+            g.fillOval(pu.x, pu.y, 20, 20);
+        }
+    }
+
+    private void drawStats(Graphics g) {
+        g.setColor(Color.BLACK);
+        g.setFont(new Font("Arial", Font.BOLD, 16));
+        g.drawString("Lives: " + lives, 10, 20);
+        g.drawString("Level: " + level, 10, 40);
+        g.drawString("Milk Fired: " + milkFired, 10, 60);
+        g.drawString("Cookies Eaten: " + cookiesEaten, 10, 80);
+        g.drawString("Made by ScriptCookie", WIDTH - 180, 20);
+
+        for (int i = 0; i < lives; i++) {
+            g.setColor(new Color(210, 180, 140));
+            g.fillOval(WIDTH - 30 - i * 30, 30, 20, 20);
+            g.setColor(new Color(139, 69, 19));
+            for (int j = 0; j < 3; j++) {
+                int cx = WIDTH - 28 - i * 30 + rand.nextInt(15);
+                int cy = 32 + rand.nextInt(15);
+                g.fillOval(cx, cy, 4, 4);
+            }
+        }
+    }
+
+    private void drawGameOver(Graphics g) {
+        g.setColor(Color.BLACK);
+        g.setFont(new Font("Arial", Font.BOLD, 48));
+        g.drawString("GAME OVER", WIDTH / 2 - 150, HEIGHT / 2);
+    }
+
+    @Override
+    public void keyPressed(KeyEvent e) {
+        switch (e.getKeyCode()) {
+            case KeyEvent.VK_LEFT -> leftPressed = true;
+            case KeyEvent.VK_RIGHT -> rightPressed = true;
+            case KeyEvent.VK_UP -> upPressed = true;
+            case KeyEvent.VK_DOWN -> downPressed = true;
+            case KeyEvent.VK_SPACE -> {
+                if (!shooting && !gameOver) {
+                    shooting = true;
+                    for (int i = 0; i < milkFired; i++)
+                        playerBullets.add(new Bullet(player.x + player.width / 2 - 3, player.y, true));
+                }
+            }
+        }
+    }
+
+    @Override
+    public void keyReleased(KeyEvent e) {
+        switch (e.getKeyCode()) {
+            case KeyEvent.VK_LEFT -> leftPressed = false;
+            case KeyEvent.VK_RIGHT -> rightPressed = false;
+            case KeyEvent.VK_UP -> upPressed = false;
+            case KeyEvent.VK_DOWN -> downPressed = false;
+            case KeyEvent.VK_SPACE -> shooting = false;
+        }
+    }
+
+    @Override
+    public void keyTyped(KeyEvent e) {}
+
+    public static void main(String[] args) {
+        JFrame frame = new JFrame("ScriptCookie's Java Shooter");
+        ScriptCookieShooter game = new ScriptCookieShooter();
+        frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
+        frame.add(game);
+        frame.pack();
+        frame.setLocationRelativeTo(null);
+        frame.setVisible(true);
+    }
+
+    class Player { int x, y, width = 50, height = 50; Player(int x, int y) { this.x = x; this.y = y; } Rectangle getBounds() { return new Rectangle(x, y, width, height); } }
+    class Enemy { int x, y, width = 50, height = 50; Enemy(int x, int y) { this.x = x; this.y = y; } Rectangle getBounds() { return new Rectangle(x, y, width, height); } }
+    class Bullet { int x, y, speed; boolean up; Bullet(int x, int y, boolean up) { this.x = x; this.y = y; this.up = up; speed = up ? 10 : 4; } void move() { y += up ? -speed : speed; } Rectangle getBounds() { return new Rectangle(x, y, 6, 12); } }
+    class PowerUp { int x, y; String type; PowerUp(int x, int y, String type) { this.x = x; this.y = y; this.type = type; } Rectangle getBounds() { return new Rectangle(x, y, 20, 20); } }
+}
