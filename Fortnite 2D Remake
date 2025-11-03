@@ -1,0 +1,394 @@
+import javax.swing.*;
+import java.awt.*;
+import java.awt.event.*;
+import java.util.ArrayList;
+import java.util.Random;
+
+public class Shooter2D extends JPanel implements ActionListener, KeyListener, MouseListener, MouseWheelListener {
+
+    static final int WIDTH = 800, HEIGHT = 600;
+    static JFrame frame;
+
+    Timer timer = new Timer(16, this);
+    boolean inMenu = true;
+    boolean gameOver = false;
+    boolean gameWin = false;
+
+    // Player
+    int px = 1000, py = 1000, pSize = 32, speed = 4, health = 100;
+    boolean up, down, left, right;
+
+    // Weapons
+    String[] weapons = {"Pistol", "Rifle", "Shotgun", "SMG", "Sniper"};
+    int currentWeapon = 0;
+    int[] ammo = {50, 30, 10, 100, 5};
+    ArrayList<Bullet> bullets = new ArrayList<>();
+
+    // Enemies
+    ArrayList<Enemy> enemies = new ArrayList<>();
+    int enemyCount = 20;
+
+    // Pickups
+    ArrayList<Pickup> pickups = new ArrayList<>();
+
+    // Map
+    int mapWidth = 2000, mapHeight = 2000;
+    ArrayList<Tree> trees = new ArrayList<>();
+    ArrayList<Building> buildings = new ArrayList<>();
+    ArrayList<Chest> chests = new ArrayList<>();
+
+    int camX, camY;
+    Random rnd = new Random();
+
+    public Shooter2D() {
+        setFocusable(true);
+        addKeyListener(this);
+        addMouseListener(this);
+        addMouseWheelListener(this);
+        timer.start();
+
+        // Generate map objects
+        for (int i = 0; i < 100; i++) trees.add(new Tree(rnd.nextInt(mapWidth), rnd.nextInt(mapHeight)));
+        for (int i = 0; i < 20; i++) buildings.add(new Building(rnd.nextInt(mapWidth - 100), rnd.nextInt(mapHeight - 100), 100, 100));
+        for (int i = 0; i < 15; i++) chests.add(new Chest(rnd.nextInt(mapWidth - 40), rnd.nextInt(mapHeight - 40)));
+
+        spawnEnemies();
+        spawnPickups();
+    }
+
+    private void spawnEnemies() {
+        enemies.clear();
+        while (enemies.size() < enemyCount) {
+            int ex = rnd.nextInt(mapWidth - 32);
+            int ey = rnd.nextInt(mapHeight - 32);
+            boolean overlap = false;
+            for (Enemy e : enemies) {
+                if (Math.abs(ex - e.x) < 50 && Math.abs(ey - e.y) < 50) overlap = true;
+            }
+            if (!overlap) enemies.add(new Enemy(ex, ey));
+        }
+    }
+
+    private void spawnPickups() {
+        pickups.clear();
+        for (int i = 0; i < 15; i++) pickups.add(randomPickup());
+    }
+
+    private Pickup randomPickup() {
+        int type = rnd.nextInt(3); // 0=health,1=ammo,2=weapon
+        int x = rnd.nextInt(mapWidth - 20), y = rnd.nextInt(mapHeight - 20);
+        return new Pickup(x, y, type);
+    }
+
+    @Override
+    public void actionPerformed(ActionEvent e) {
+        if (!inMenu && !gameOver && !gameWin) updateGame();
+        repaint();
+    }
+
+    private void updateGame() {
+        // Player movement
+        if (up) py -= speed;
+        if (down) py += speed;
+        if (left) px -= speed;
+        if (right) px += speed;
+
+        px = Math.max(0, Math.min(mapWidth - pSize, px));
+        py = Math.max(0, Math.min(mapHeight - pSize, py));
+
+        camX = px - WIDTH / 2;
+        camY = py - HEIGHT / 2;
+
+        // Update bullets
+        for (int i = 0; i < bullets.size(); i++) {
+            Bullet b = bullets.get(i);
+            b.update();
+            if (b.x < 0 || b.x > mapWidth || b.y < 0 || b.y > mapHeight) {
+                bullets.remove(i--);
+                continue;
+            }
+            // Player bullets hitting enemies
+            if (b.owner == null) {
+                for (Enemy en : enemies) {
+                    if (b.intersects(en)) {
+                        en.health -= 20;
+                        bullets.remove(i--);
+                        break;
+                    }
+                }
+            } else {
+                // Enemy bullets hitting player
+                if (new Rectangle(px, py, pSize, pSize).intersects(new Rectangle((int) b.x, (int) b.y, 5, 5))) {
+                    health -= 10;
+                    bullets.remove(i--);
+                    if (health <= 0) gameOver = true;
+                    continue;
+                }
+                // Enemy bullets hitting other enemies
+                for (Enemy en : enemies) {
+                    if (en != b.owner && b.intersects(en)) {
+                        en.health -= 20;
+                        bullets.remove(i--);
+                        break;
+                    }
+                }
+            }
+        }
+
+        // Remove dead enemies
+        enemies.removeIf(en -> en.health <= 0);
+
+        // Win condition
+        if (enemies.isEmpty() && !gameOver) gameWin = true;
+
+        // Enemy behavior
+        for (Enemy en : enemies) {
+            // Random movement
+            if (rnd.nextDouble() < 0.02) {
+                en.vx = rnd.nextInt(3) - 1;
+                en.vy = rnd.nextInt(3) - 1;
+            }
+            en.x += en.vx * en.speed;
+            en.y += en.vy * en.speed;
+            en.x = Math.max(0, Math.min(mapWidth - en.size, en.x));
+            en.y = Math.max(0, Math.min(mapHeight - en.size, en.y));
+
+            // Enemy shooting at nearest target (player or other enemies)
+            en.shootTick--;
+            if (en.shootTick <= 0) {
+                en.shootTick = rnd.nextInt(60) + 30;
+                Object target = chooseTarget(en);
+                if (target != null) {
+                    int tx = target instanceof Enemy ? ((Enemy) target).x + 16 : px + pSize / 2;
+                    int ty = target instanceof Enemy ? ((Enemy) target).y + 16 : py + pSize / 2;
+                    bullets.add(new Bullet(en.x + en.size / 2, en.y + en.size / 2, tx, ty, en));
+                }
+            }
+        }
+
+        // Player pickups
+        for (int i = 0; i < pickups.size(); i++) {
+            Pickup p = pickups.get(i);
+            if (new Rectangle(px, py, pSize, pSize).intersects(new Rectangle(p.x, p.y, 20, 20))) {
+                if (p.type == 0) health = Math.min(100, health + 30);
+                else if (p.type == 1) ammo[currentWeapon] += 20;
+                else if (p.type == 2) ammo[rnd.nextInt(weapons.length)] += 20;
+                pickups.remove(i--);
+                pickups.add(randomPickup());
+            }
+        }
+    }
+
+    private Object chooseTarget(Enemy en) {
+        ArrayList<Object> possibleTargets = new ArrayList<>();
+        possibleTargets.addAll(enemies);
+        possibleTargets.remove(en); // exclude self
+        possibleTargets.add("player"); // player is target
+        // Randomly pick closest target
+        double minDist = Double.MAX_VALUE;
+        Object chosen = null;
+        int ex = en.x + en.size / 2, ey = en.y + en.size / 2;
+        for (Object t : possibleTargets) {
+            double tx, ty;
+            if (t instanceof Enemy) { tx = ((Enemy) t).x + 16; ty = ((Enemy) t).y + 16; }
+            else { tx = px + pSize / 2; ty = py + pSize / 2; }
+            double dist = Math.hypot(tx - ex, ty - ey);
+            if (dist < minDist) { minDist = dist; chosen = t; }
+        }
+        if (chosen == "player") return null; // null = shoot at player
+        return chosen;
+    }
+
+    @Override
+    protected void paintComponent(Graphics g0) {
+        super.paintComponent(g0);
+        Graphics2D g = (Graphics2D) g0.create();
+
+        if (inMenu) { drawMenu(g); g.dispose(); return; }
+
+        g.setColor(new Color(180, 220, 180));
+        g.fillRect(0, 0, WIDTH, HEIGHT);
+
+        g.translate(-camX, -camY);
+
+        // Map objects
+        g.setColor(new Color(34, 139, 34));
+        for (Tree t : trees) g.fillRect(t.x, t.y, 20, 20);
+        g.setColor(new Color(139, 69, 19));
+        for (Building b : buildings) g.fillRect(b.x, b.y, b.w, b.h);
+        g.setColor(new Color(218, 165, 32));
+        for (Chest c : chests) g.fillRect(c.x, c.y, 20, 20);
+
+        // Pickups
+        g.setFont(new Font("Segoe UI Emoji", Font.PLAIN, 20));
+        for (Pickup p : pickups) {
+            String symbol = p.type == 0 ? "🩹" : p.type == 1 ? "🟦" : "🔫";
+            g.drawString(symbol, p.x, p.y + 15);
+        }
+
+        // Player
+        g.setColor(Color.BLUE);
+        g.fillRect(px, py, pSize, pSize);
+
+        // Bullets
+        g.setColor(Color.RED);
+        for (Bullet b : bullets) g.fillRect((int)b.x, (int)b.y, 5, 5);
+
+        // Enemies
+        g.setColor(Color.MAGENTA);
+        for (Enemy en : enemies) g.fillRect(en.x, en.y, en.size, en.size);
+
+        g.translate(camX, camY);
+
+        // UI
+        g.setColor(new Color(0, 0, 0, 150));
+        g.fillRoundRect(WIDTH - 190, 8, 180, 26, 8, 8);
+        g.setColor(Color.WHITE);
+        g.setFont(new Font("Arial", Font.BOLD, 14));
+        g.drawString("Made by ScriptCookie", WIDTH - 170, 26);
+
+        g.setColor(Color.BLACK);
+        g.drawString("Health: " + health, 10, 20);
+        g.drawString("Weapon: " + weapons[currentWeapon] + " Ammo: " + ammo[currentWeapon], 10, 40);
+
+        // Game Over / Win
+        if (gameOver) {
+            g.setFont(new Font("Arial", Font.BOLD, 36));
+            g.setColor(Color.RED);
+            g.drawString("GAME OVER", WIDTH/2 - 120, HEIGHT/2 - 20);
+            g.setFont(new Font("Arial", Font.PLAIN, 20));
+            g.setColor(Color.BLACK);
+            g.drawString("Press R to Restart", WIDTH/2 - 90, HEIGHT/2 + 20);
+        } else if (gameWin) {
+            g.setFont(new Font("Arial", Font.BOLD, 36));
+            g.setColor(Color.GREEN);
+            g.drawString("YOU WIN!", WIDTH/2 - 100, HEIGHT/2 - 20);
+            g.setFont(new Font("Arial", Font.PLAIN, 20));
+            g.setColor(Color.BLACK);
+            g.drawString("Press R to Restart", WIDTH/2 - 90, HEIGHT/2 + 20);
+        }
+
+        g.dispose();
+    }
+
+    private void drawMenu(Graphics2D g) {
+        g.setColor(new Color(50,50,50));
+        g.fillRect(0,0,getWidth(),getHeight());
+        g.setColor(Color.WHITE);
+        g.setFont(new Font("Arial", Font.BOLD,28));
+        g.drawString("2D Shooter: ScriptCookie Edition",150,150);
+        g.setFont(new Font("Arial", Font.PLAIN,18));
+        g.drawString("Made by ScriptCookie", WIDTH-180,30);
+
+        int bx = WIDTH/2-80, by=240, bw=160, bh=50;
+        g.setColor(new Color(80,80,80));
+        g.fillRoundRect(bx,by,bw,bh,8,8);
+        g.setColor(Color.WHITE);
+        g.drawRoundRect(bx,by,bw,bh,8,8);
+        g.drawString("Play", bx+60, by+32);
+
+        int qx = WIDTH/2-80, qy=320;
+        g.setColor(new Color(80,80,80));
+        g.fillRoundRect(qx,qy,bw,bh,8,8);
+        g.setColor(Color.WHITE);
+        g.drawRoundRect(qx,qy,bw,bh,8,8);
+        g.drawString("Quit", qx+60, qy+32);
+    }
+
+    @Override
+    public void keyPressed(KeyEvent e) {
+        int kc = e.getKeyCode();
+        if(kc==KeyEvent.VK_W) up=true;
+        if(kc==KeyEvent.VK_S) down=true;
+        if(kc==KeyEvent.VK_A) left=true;
+        if(kc==KeyEvent.VK_D) right=true;
+        if(kc==KeyEvent.VK_R && (gameOver || gameWin)) restartGame();
+        if(kc==KeyEvent.VK_M) winGame();
+    }
+
+    private void winGame() {
+        enemies.clear();
+        gameWin=true;
+    }
+
+    private void restartGame() {
+        px=1000; py=1000; health=100;
+        bullets.clear();
+        spawnEnemies();
+        spawnPickups();
+        gameOver=false;
+        gameWin=false;
+    }
+
+    @Override
+    public void keyReleased(KeyEvent e) {
+        int kc=e.getKeyCode();
+        if(kc==KeyEvent.VK_W) up=false;
+        if(kc==KeyEvent.VK_S) down=false;
+        if(kc==KeyEvent.VK_A) left=false;
+        if(kc==KeyEvent.VK_D) right=false;
+    }
+
+    @Override public void keyTyped(KeyEvent e){}
+    @Override public void mousePressed(MouseEvent e){}
+    @Override public void mouseReleased(MouseEvent e){}
+    @Override public void mouseEntered(MouseEvent e){}
+    @Override public void mouseExited(MouseEvent e){}
+    @Override
+    public void mouseClicked(MouseEvent e) {
+        if(inMenu){
+            int bx=WIDTH/2-80,by=240,bw=160,bh=50;
+            int qx=WIDTH/2-80,qy=320;
+            if(e.getX()>=bx&&e.getX()<=bx+bw&&e.getY()>=by&&e.getY()<=by+bh) inMenu=false;
+            if(e.getX()>=qx&&e.getX()<=qx+bw&&e.getY()>=qy&&e.getY()<=qy+bh) System.exit(0);
+        } else {
+            if(ammo[currentWeapon]>0 && !gameOver && !gameWin){
+                bullets.add(new Bullet(px+pSize/2, py+pSize/2, e.getX()+camX, e.getY()+camY,null));
+                ammo[currentWeapon]--;
+            }
+        }
+    }
+    @Override
+    public void mouseWheelMoved(MouseWheelEvent e){
+        currentWeapon = (currentWeapon + e.getWheelRotation() + weapons.length)%weapons.length;
+    }
+
+    public static void main(String[] args){
+        SwingUtilities.invokeLater(()->{
+            frame=new JFrame("2D Shooter: ScriptCookie Edition");
+            Shooter2D game=new Shooter2D();
+            frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
+            frame.setResizable(false);
+            frame.add(game);
+            frame.setSize(WIDTH,HEIGHT);
+            frame.setLocationRelativeTo(null);
+            frame.setVisible(true);
+        });
+    }
+
+    // Classes
+    class Bullet{
+        double x,y,vx,vy,speed=10;
+        Enemy owner;
+        Bullet(int sx,int sy,int tx,int ty, Enemy owner){
+            this.owner=owner;
+            x=sx;y=sy;
+            double dx=tx-sx,dy=ty-sy;
+            double len=Math.sqrt(dx*dx+dy*dy);
+            vx=dx/len*speed; vy=dy/len*speed;
+        }
+        void update(){ x+=vx; y+=vy; }
+        boolean intersects(Enemy en){ return new Rectangle((int)x,(int)y,5,5).intersects(new Rectangle(en.x,en.y,en.size,en.size)); }
+    }
+
+    class Enemy{
+        int x,y,size=32,health=50,speed=2,shootTick=0;
+        int vx=0,vy=0;
+        Enemy(int x,int y){this.x=x;this.y=y;}
+    }
+
+    class Tree{ int x,y; Tree(int x,int y){this.x=x;this.y=y;} }
+    class Building{ int x,y,w,h; Building(int x,int y,int w,int h){this.x=x;this.y=y;this.w=w;this.h=h;} }
+    class Chest{ int x,y; Chest(int x,int y){this.x=x;this.y=y;} }
+    class Pickup{ int x,y,type; Pickup(int x,int y,int type){this.x=x;this.y=y;this.type=type;} }
+}
