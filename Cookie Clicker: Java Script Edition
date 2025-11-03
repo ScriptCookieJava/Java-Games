@@ -1,0 +1,191 @@
+import javax.swing.*;
+import java.awt.*;
+import java.awt.event.*;
+import java.io.*;
+import java.util.*;
+
+public class UltimateCookieClickerClean extends JPanel {
+
+    private long cookies = 0;
+    private int cookiesPerClick = 1;
+    private long cookiesPerSecond = 0;
+
+    private JButton cookieButton;
+    private JLabel cookieLabel;
+    private JLabel topRightLabel;
+    private JButton saveButton;
+
+    private ArrayList<Upgrade> upgrades = new ArrayList<>();
+    private Random rand = new Random();
+
+    private int[] chipX = new int[12];
+    private int[] chipY = new int[12];
+
+    private javax.swing.Timer cookieTimer;
+
+    public UltimateCookieClickerClean() {
+        setLayout(null);
+        setBackground(new Color(245, 222, 179));
+
+        // Fixed chocolate chips
+        for (int i = 0; i < chipX.length; i++) {
+            chipX[i] = rand.nextInt(160) + 20;
+            chipY[i] = rand.nextInt(160) + 20;
+        }
+
+        // Top-right label
+        topRightLabel = new JLabel("Made by ScriptCookie");
+        topRightLabel.setBounds(450, 10, 200, 30);
+        topRightLabel.setFont(new Font("Arial", Font.BOLD, 14));
+        add(topRightLabel);
+
+        // Cookie label
+        cookieLabel = new JLabel("Cookies: 0 | CPS: 0 | CPC: 1");
+        cookieLabel.setFont(new Font("Arial", Font.BOLD, 20));
+        cookieLabel.setBounds(20, 10, 420, 30);
+        add(cookieLabel);
+
+        // Cookie button
+        cookieButton = new JButton() {
+            @Override
+            protected void paintComponent(Graphics g) {
+                super.paintComponent(g);
+                Graphics2D g2 = (Graphics2D) g;
+                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+                GradientPaint gp = new GradientPaint(0, 0, new Color(255, 223, 100),
+                        0, getHeight(), new Color(205, 170, 50));
+                g2.setPaint(gp);
+                g2.fillOval(0, 0, getWidth(), getHeight());
+                g2.setColor(new Color(139, 69, 19));
+                for (int i = 0; i < chipX.length; i++) {
+                    g2.fillOval(chipX[i], chipY[i], 12, 12);
+                }
+            }
+        };
+        cookieButton.setBounds(200, 100, 200, 200);
+        cookieButton.setFocusPainted(false);
+        cookieButton.setBorderPainted(false);
+        cookieButton.setContentAreaFilled(false);
+        add(cookieButton);
+
+        cookieButton.addActionListener(e -> {
+            cookies += cookiesPerClick;
+            updateLabels();
+        });
+
+        // Save button (bottom-right)
+        saveButton = new JButton("Save Progress");
+        saveButton.setBounds(470, 800, 150, 40); // bottom-right
+        add(saveButton);
+        saveButton.addActionListener(e -> saveProgress());
+
+        // Smaller set of upgrades
+        upgrades.add(new Upgrade("Cursor", 15, 1));
+        upgrades.add(new Upgrade("Grandma", 100, 5));
+        upgrades.add(new Upgrade("Farm", 500, 20));
+        upgrades.add(new Upgrade("Factory", 3000, 100));
+        upgrades.add(new Upgrade("Mine", 10000, 400));
+        upgrades.add(new Upgrade("Bank", 40000, 800));
+
+        int yPos = 350;
+        for (Upgrade u : upgrades) {
+            u.button.setBounds(20, yPos, 300, 40);
+            yPos += 45;
+            add(u.button);
+            u.button.addActionListener(ev -> buyUpgrade(u));
+        }
+
+        // Timer for auto cookies
+        cookieTimer = new javax.swing.Timer(1000, e -> {
+            cookies += cookiesPerSecond;
+            updateLabels();
+        });
+        cookieTimer.start();
+
+        loadProgress();
+    }
+
+    private void buyUpgrade(Upgrade u) {
+        if (cookies >= u.cost) {
+            cookies -= u.cost;
+            u.level++;
+            cookiesPerSecond += u.cps;
+            u.cost = (long) (u.cost * 1.15);
+            u.updateButton();
+            updateLabels();
+        } else {
+            JOptionPane.showMessageDialog(this, "Not enough cookies for " + u.name + "!");
+        }
+    }
+
+    private void updateLabels() {
+        cookieLabel.setText("Cookies: " + cookies + " | CPS: " + cookiesPerSecond + " | CPC: " + cookiesPerClick);
+        repaint();
+    }
+
+    private void saveProgress() {
+        try (PrintWriter pw = new PrintWriter("cookie_save.txt")) {
+            pw.println(cookies);
+            pw.println(cookiesPerClick);
+            pw.println(cookiesPerSecond);
+            for (Upgrade u : upgrades) {
+                pw.println(u.level);
+                pw.println(u.cost);
+            }
+            JOptionPane.showMessageDialog(this, "Progress saved!");
+        } catch (Exception ex) {
+            JOptionPane.showMessageDialog(this, "Failed to save!");
+        }
+    }
+
+    private void loadProgress() {
+        File f = new File("cookie_save.txt");
+        if (!f.exists()) return;
+        try (Scanner sc = new Scanner(f)) {
+            cookies = Long.parseLong(sc.nextLine());
+            cookiesPerClick = Integer.parseInt(sc.nextLine());
+            cookiesPerSecond = Long.parseLong(sc.nextLine());
+            for (Upgrade u : upgrades) {
+                u.level = Integer.parseInt(sc.nextLine());
+                u.cost = Long.parseLong(sc.nextLine());
+                cookiesPerSecond += u.level * u.cps;
+                u.updateButton();
+            }
+            updateLabels();
+        } catch (Exception ex) {
+            System.out.println("No saved progress found.");
+        }
+    }
+
+    private class Upgrade {
+        String name;
+        long cost;
+        int cps;
+        int level = 0;
+        JButton button;
+
+        Upgrade(String name, long cost, int cps) {
+            this.name = name;
+            this.cost = cost;
+            this.cps = cps;
+            button = new JButton();
+            updateButton();
+        }
+
+        void updateButton() {
+            button.setText(name + " | Level: " + level + " | Cost: " + cost + " | CPS: " + cps);
+        }
+    }
+
+    public static void main(String[] args) {
+        SwingUtilities.invokeLater(() -> {
+            JFrame frame = new JFrame("Cookie Clicker: ScriptCookie Edition");
+            frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
+            frame.setSize(650, 900);
+            frame.setResizable(false);
+            frame.add(new UltimateCookieClickerClean());
+            frame.setLocationRelativeTo(null);
+            frame.setVisible(true);
+        });
+    }
+}
